@@ -244,6 +244,7 @@ static inline void memalloc_noreclaim_restore(unsigned int flags)
 enum {
 	MEMBARRIER_STATE_PRIVATE_EXPEDITED_READY	= (1U << 0),
 	MEMBARRIER_STATE_SWITCH_MM			= (1U << 1),
+	MEMBARRIER_STATE_PRIVATE_EXPEDITED_SYNC_CORE_READY = (1U << 2),
 };
 
 static inline void membarrier_execve(struct task_struct *t)

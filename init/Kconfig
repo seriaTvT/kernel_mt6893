@@ -1511,6 +1511,9 @@ config HAVE_ARCH_USERFAULTFD_MINOR
 	help
 	 Arch has userfaultfd minor fault support
 
+config ARCH_HAS_MEMBARRIER_SYNC_CORE
+	bool
+
 config MEMBARRIER
 	bool "Enable membarrier() system call" if EXPERT
 	default y

@@ -26,9 +26,17 @@
  * Bitmask made from a "or" of all commands within enum membarrier_cmd,
  * except MEMBARRIER_CMD_QUERY.
  */
+#ifdef CONFIG_ARCH_HAS_MEMBARRIER_SYNC_CORE
+#define MEMBARRIER_SYNC_CORE_BITMASK \
+	(MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE | \
+	 MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE)
+#else
+#define MEMBARRIER_SYNC_CORE_BITMASK 0
+#endif
+
 #define MEMBARRIER_CMD_BITMASK	\
 	(MEMBARRIER_CMD_SHARED | MEMBARRIER_CMD_PRIVATE_EXPEDITED	\
-	| MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED)
+	| MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED | MEMBARRIER_SYNC_CORE_BITMASK)
 
 static DEFINE_MUTEX(membarrier_ipi_mutex);
 
@@ -37,15 +45,28 @@ static void ipi_mb(void *info)
 	smp_mb();	/* IPIs should be serializing but paranoid. */
 }
 
-static int membarrier_private_expedited(void)
+static int membarrier_private_expedited(bool sync_core)
 {
 	int cpu;
 	bool fallback = false;
 	cpumask_var_t tmpmask;
 
-	if (!(atomic_read(&current->mm->membarrier_state)
-			& MEMBARRIER_STATE_PRIVATE_EXPEDITED_READY))
+	int ready = sync_core ? MEMBARRIER_STATE_PRIVATE_EXPEDITED_SYNC_CORE_READY :
+		MEMBARRIER_STATE_PRIVATE_EXPEDITED_READY;
+
+	if (sync_core && !IS_ENABLED(CONFIG_ARCH_HAS_MEMBARRIER_SYNC_CORE))
+		return -EINVAL;
+	if (!(atomic_read(&current->mm->membarrier_state) & ready))
 		return -EPERM;
+
+	/*
+	 * ARM64 returns to userspace with ERET, a context synchronization
+	 * event. The IPIs below force running sibling threads through that
+	 * event; sleeping threads do so before resuming userspace. The
+	 * caller also returns through ERET, including on a single CPU.
+	 * Only ARM64 selects ARCH_HAS_MEMBARRIER_SYNC_CORE in this tree.
+	 * Based on Linux v4.19 membarrier private SYNC_CORE support.
+	 */
 
 	if (num_online_cpus() == 1)
 		return 0;
@@ -109,7 +130,7 @@ static int membarrier_private_expedited(void)
 	return 0;
 }
 
-static void membarrier_register_private_expedited(void)
+static int membarrier_register_private_expedited(bool sync_core)
 {
 	struct task_struct *p = current;
 	struct mm_struct *mm = p->mm;
@@ -119,11 +140,18 @@ static void membarrier_register_private_expedited(void)
 	 * groups, which use the same mm. (CLONE_VM but not
 	 * CLONE_THREAD).
 	 */
-	if (atomic_read(&mm->membarrier_state)
-			& MEMBARRIER_STATE_PRIVATE_EXPEDITED_READY)
-		return;
-	atomic_or(MEMBARRIER_STATE_PRIVATE_EXPEDITED_READY,
-			&mm->membarrier_state);
+	int ready = sync_core ? MEMBARRIER_STATE_PRIVATE_EXPEDITED_SYNC_CORE_READY :
+		MEMBARRIER_STATE_PRIVATE_EXPEDITED_READY;
+
+	if (sync_core && !IS_ENABLED(CONFIG_ARCH_HAS_MEMBARRIER_SYNC_CORE))
+		return -EINVAL;
+	if (atomic_read(&mm->membarrier_state) & ready)
+		return 0;
+	/* Match the upstream registration grace period for shared mm users. */
+	if (!(atomic_read(&mm->mm_users) == 1 && get_nr_threads(p) == 1))
+		synchronize_sched();
+	atomic_or(ready, &mm->membarrier_state);
+	return 0;
 }
 
 /**
@@ -174,10 +202,13 @@ SYSCALL_DEFINE2(membarrier, int, cmd, int, flags)
 			synchronize_sched();
 		return 0;
 	case MEMBARRIER_CMD_PRIVATE_EXPEDITED:
-		return membarrier_private_expedited();
+		return membarrier_private_expedited(false);
 	case MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED:
-		membarrier_register_private_expedited();
-		return 0;
+		return membarrier_register_private_expedited(false);
+	case MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE:
+		return membarrier_private_expedited(true);
+	case MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE:
+		return membarrier_register_private_expedited(true);
 	default:
 		return -EINVAL;
 	}
