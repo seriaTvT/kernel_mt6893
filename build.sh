@@ -58,33 +58,11 @@ fi
 mkdir -p out
 make O=out ARCH=arm64 "$DEFCONFIG"
 if [ "$INCLUDE_KSU" = true ]; then
+    mode=bakasu
     if [ "$DEVICE" = chopin ]; then
-        scripts/config --file out/.config -e KALLSYMS -e KALLSYMS_ALL \
-            -e KSU -d KSU_MANUAL_HOOK -e KSU_SUSFS \
-            -e KSU_SUSFS_PRIORITY_UID_FILTER
-    else
-        scripts/config --file out/.config -e KALLSYMS -e KALLSYMS_ALL \
-            -e KSU -e KSU_MANUAL_HOOK -d KSU_SUSFS
+        mode=susfs
     fi
-    make O=out ARCH=arm64 olddefconfig
-
-    required_config='CONFIG_KSU=y'
-    if [ "$DEVICE" = chopin ]; then
-        required_config="$required_config
-# CONFIG_KSU_MANUAL_HOOK is not set
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
-    else
-        required_config="$required_config
-CONFIG_KSU_MANUAL_HOOK=y
-# CONFIG_KSU_SUSFS is not set"
-    fi
-    while IFS= read -r setting; do
-        if ! grep -Fxq -- "$setting" out/.config; then
-            printf 'Missing required kernel configuration: %s\n' "$setting" >&2
-            exit 1
-        fi
-    done <<< "$required_config"
+    bash scripts/configure-bakasu.sh out/.config "$mode" make O=out ARCH=arm64
 fi
 
 echo -e "\nStarting compilation...\n"
