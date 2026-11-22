@@ -238,7 +238,7 @@ void susfs_enable_log(void __user **user_info);
 #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 void susfs_set_cmdline_or_bootconfig(void __user **user_info);
 struct seq_file;
-void susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);
+bool susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);
 #endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 
 /* open_redirect */

@@ -1346,6 +1346,9 @@ out_copy_to_user:
 void susfs_spoof_uname(struct new_utsname* tmp) {
 	unsigned seq;
 
+	if (!static_branch_unlikely(&susfs_is_uname_spoof_buffer_set))
+		return;
+
 	do {
 		seq = read_seqbegin(&susfs_uname_seqlock);
 		strscpy(tmp->release, my_uname.release, __NEW_UTS_LEN);
@@ -1383,7 +1386,7 @@ out_copy_to_user:
 
 /* spoof_cmdline_or_bootconfig */
 #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-static char *fake_cmdline_or_bootconfig = NULL;
+static char fake_cmdline_or_bootconfig[SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE];
 DEFINE_STATIC_KEY_FALSE(susfs_is_fake_cmdline_or_bootconfig_buffer_set);
 static DEFINE_SEQLOCK(susfs_fake_cmdline_or_bootconfig_seqlock);
 
@@ -1409,14 +1412,6 @@ void susfs_set_cmdline_or_bootconfig(void __user **user_info) {
 		goto out_copy_to_user;
 	}
 
-	if (!fake_cmdline_or_bootconfig) {
-		fake_cmdline_or_bootconfig = (char *)kzalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
-		if (!fake_cmdline_or_bootconfig) {
-			info->err = -ENOMEM;
-			goto out_copy_to_user;
-		}
-	}
-
 	write_seqlock(&susfs_fake_cmdline_or_bootconfig_seqlock);
 	strscpy(fake_cmdline_or_bootconfig,
 			info->fake_cmdline_or_bootconfig,
@@ -1440,19 +1435,26 @@ out_copy_to_user:
 	}
 }
 
-void susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
+bool susfs_spoof_cmdline_or_bootconfig(struct seq_file *m)
+{
 	unsigned seq;
-	char *buf = (char *)kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
+	char *buf;
 
-	if (!buf) {
-		return;
-	}
+	if (!static_branch_unlikely(&susfs_is_fake_cmdline_or_bootconfig_buffer_set))
+		return false;
+
+	buf = kmalloc(sizeof(fake_cmdline_or_bootconfig), GFP_KERNEL);
+	if (!buf)
+		return false;
+
 	do {
 		seq = read_seqbegin(&susfs_fake_cmdline_or_bootconfig_seqlock);
-		strscpy(buf, fake_cmdline_or_bootconfig, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
+		strscpy(buf, fake_cmdline_or_bootconfig,
+			sizeof(fake_cmdline_or_bootconfig));
 	} while (read_seqretry(&susfs_fake_cmdline_or_bootconfig_seqlock, seq));
 	seq_puts(m, buf);
 	kfree(buf);
+	return true;
 }
 #endif
 
