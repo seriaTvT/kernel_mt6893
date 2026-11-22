@@ -359,7 +359,7 @@ hdr-arch  := $(SRCARCH)
 KCONFIG_CONFIG	?= .config
 export KCONFIG_CONFIG
 
-# The normal kernel build does not require the optional BakaSU submodule.
+# The normal kernel build does not require the optional BakaSU checkout.
 ifeq ($(KBUILD_KSU),1)
 export KSU_KCONFIG := drivers/kernelsu/Kconfig
 else

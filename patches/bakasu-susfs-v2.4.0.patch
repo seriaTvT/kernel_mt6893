@@ -1,5 +1,5 @@
 diff --git a/kernel/Kconfig b/kernel/Kconfig
-index 79bc79eee88807a19a24807e2c1e8eafab5f1591..9b95fc01999262bfc5937de37cb2aab2087da50b 100644
+index da8787d1a56f5ea3d160da5637596476e709ee1f..3152d4ba4917508b883b97e3cc566caf2a8a5213 100644
 --- a/kernel/Kconfig
 +++ b/kernel/Kconfig
 @@ -3,7 +3,7 @@ menu "KernelSU"
@@ -11,20 +11,8 @@ index 79bc79eee88807a19a24807e2c1e8eafab5f1591..9b95fc01999262bfc5937de37cb2aab2
  	  help
  		Enable kernel-level root privileges on Android System.
  		Choose "m" here to build KernelSU as LKM
-@@ -244,6 +244,11 @@ config KSU_SUSFS_SUS_MAP
-         - It may not be able to evade detections by apps that implement a good injection detection.
-         - Effective only on zygote spawned umounted user app process >= 10000.
- 
-+config KSU_SUSFS_PRIORITY_UID_FILTER
-+    bool "Filter UID-based priority queries"
-+    depends on KSU_SUSFS
-+    default y
-+
- endmenu
- 
- endmenu
 diff --git a/kernel/feature/sucompat.c b/kernel/feature/sucompat.c
-index dc8cab81640b22297fbaaab310b5f416318688e4..d2ce80c6c998b47690553360e92964c7913e907a 100644
+index a47c3903eb9c43f8844618f1b018fce9ecebbd25..562ae612f950aa504b2493aa70c2a0a33dd17088 100644
 --- a/kernel/feature/sucompat.c
 +++ b/kernel/feature/sucompat.c
 @@ -375,6 +375,9 @@ int ksu_handle_post_execve_common(int *fd, const char **filename, void *argv, vo
@@ -38,34 +26,32 @@ index dc8cab81640b22297fbaaab310b5f416318688e4..d2ce80c6c998b47690553360e92964c7
      ksu_install_su_fd();
  #endif
 diff --git a/kernel/manager/throne_tracker.c b/kernel/manager/throne_tracker.c
-index d487fc8d60a3b10d386352019a8813be69691f20..76a791dfdbd47290603ad279c2fb568bf3253dcf 100644
+index f7e9531d1f9e5975f60125c1b3462f766327b6e5..488a668c55730c113dcd072df6d3ce179b1d3f88 100644
 --- a/kernel/manager/throne_tracker.c
 +++ b/kernel/manager/throne_tracker.c
-@@ -11,6 +11,9 @@
+@@ -11,7 +11,7 @@
  #include <linux/stat.h>
  #include <linux/namei.h>
  #include <linux/kernel.h> // for container_of in UL
+-#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
 +#ifdef CONFIG_KSU_SUSFS
-+#include <linux/susfs.h>
-+#endif
- 
- #include "policy/allowlist.h"
- #include "manager/apk_sign.h"
-@@ -421,6 +424,12 @@ void ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry)
-     // and user install an new app before task_work executed
-     // ^ race here
-     track_throne(TRACK_THRONE_FROM_RENAMEAT | TRACK_THRONE_FORCE_SYNCHRONOUS);
-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-+    susfs_parse_sus_path_app_strings();
-+#endif
-+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
-+    susfs_parse_priority_app_strings();
-+#endif
- }
+ #include <linux/susfs.h>
  #endif
  
+@@ -448,7 +448,11 @@ void ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry)
+         cb = kzalloc(sizeof(*cb), GFP_KERNEL);
+         if (cb) {
+             cb->func = ksu_track_throne_tw_func;
++#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
++            if (!task_work_add(current, cb, true))
++#else
+             if (!task_work_add(current, cb, TWA_RESUME))
++#endif
+                 return;
+             kfree(cb);
+         }
 diff --git a/kernel/runtime/ksud_integration.c b/kernel/runtime/ksud_integration.c
-index bfe7cbf5d0c1e381b12992040df65ecfd6ebb9a8..f1f214b43534ec03f9e8fe0200e18664258b8696 100644
+index aaf79ea7f92dd7a4edcfba69849331a1ce63fed0..bda8724af5ff70fec5e6de74cb6466861a4a8b63 100644
 --- a/kernel/runtime/ksud_integration.c
 +++ b/kernel/runtime/ksud_integration.c
 @@ -674,6 +674,21 @@ void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_pt
@@ -91,34 +77,10 @@ index bfe7cbf5d0c1e381b12992040df65ecfd6ebb9a8..f1f214b43534ec03f9e8fe0200e18664
  {
      struct file *file = fget(fd);
 diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
-index c23a7cb4cfb172673c85edca44822ba56dd103e4..65a467c2b4979fd72eca6d15bff0828b284bfe9b 100644
+index 8af7412da54b92add75cc2d701497b42d3a5a625..413e0d29c04716dbdb87cae83b05cc55c743e2d1 100644
 --- a/kernel/supercall/dispatch.c
 +++ b/kernel/supercall/dispatch.c
-@@ -1117,6 +1117,10 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
-         susfs_add_sus_path_loop(arg);
-         return 0;
-     }
-+    case CMD_SUSFS_SET_SUS_PATH_UID_FILTER: {
-+        susfs_set_sus_path_uid_filter(arg);
-+        return 0;
-+    }
- #endif //#ifdef CONFIG_KSU_SUSFS_SUS_PATH
- #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-     case CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS: {
-@@ -1168,6 +1172,12 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
-         return 0;
-     }
- #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
-+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
-+    case CMD_SUSFS_SET_PRIORITY_UID_FILTER: {
-+        susfs_set_priority_uid_filter(arg);
-+        return 0;
-+    }
-+#endif
-     case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING: {
-         susfs_set_avc_log_spoofing(arg);
-         return 0;
-@@ -1185,7 +1195,7 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
+@@ -1196,7 +1196,7 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
          return 0;
      }
      }

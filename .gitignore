@@ -125,3 +125,7 @@ all.config
 # fetched Android config fragments
 kernel/configs/android-*.cfg
 
+# Build locks and local BakaSU sources
+/.build.lock
+/.bakasu/
+/KernelSU/

@@ -4,6 +4,8 @@
 # Brought to you by rio004
 #
 
+set -e
+
 # Date/Time
 SECONDS=0
 DATE=$(date '+%Y%m%d-%H%M')
@@ -14,6 +16,10 @@ DEFCONFIG="${DEVICE}_defconfig"
 ZIPNAME="HydrogenKernel-${DEVICE}-${DATE}.zip"
 
 echo -e "Building for: $DEVICE\n"
+
+# Both build variants share the output directory.
+exec 9> .build.lock
+flock 9
 
 # Ensure the toolchain is available
 TC_DIR="$HOME/toolchains/proton-clang"
@@ -38,25 +44,47 @@ for arg in "$@"; do
     esac
 done
 
-[ "$CLEAN_BUILD" = true ] && rm -rf out
+if [ "$CLEAN_BUILD" = true ]; then
+    rm -rf out
+fi
+unset KBUILD_KSU
 if [ "$INCLUDE_KSU" = true ]; then
-    sh scripts/prepare-bakasu.sh || exit 1
+    # BAKASU_REF can select a specific branch, tag, or commit instead of main.
+    sh scripts/prepare-bakasu.sh
     export KBUILD_KSU=1
 fi
 
 # Compilation process
 mkdir -p out
-make O=out ARCH=arm64 "$DEFCONFIG" || exit 1
+make O=out ARCH=arm64 "$DEFCONFIG"
 if [ "$INCLUDE_KSU" = true ]; then
     if [ "$DEVICE" = chopin ]; then
         scripts/config --file out/.config -e KALLSYMS -e KALLSYMS_ALL \
             -e KSU -d KSU_MANUAL_HOOK -e KSU_SUSFS \
-            -e KSU_SUSFS_PRIORITY_UID_FILTER || exit 1
+            -e KSU_SUSFS_PRIORITY_UID_FILTER
     else
         scripts/config --file out/.config -e KALLSYMS -e KALLSYMS_ALL \
-            -e KSU -e KSU_MANUAL_HOOK -d KSU_SUSFS || exit 1
+            -e KSU -e KSU_MANUAL_HOOK -d KSU_SUSFS
     fi
-    make O=out ARCH=arm64 olddefconfig || exit 1
+    make O=out ARCH=arm64 olddefconfig
+
+    required_config='CONFIG_KSU=y'
+    if [ "$DEVICE" = chopin ]; then
+        required_config="$required_config
+# CONFIG_KSU_MANUAL_HOOK is not set
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y"
+    else
+        required_config="$required_config
+CONFIG_KSU_MANUAL_HOOK=y
+# CONFIG_KSU_SUSFS is not set"
+    fi
+    while IFS= read -r setting; do
+        if ! grep -Fxq -- "$setting" out/.config; then
+            printf 'Missing required kernel configuration: %s\n' "$setting" >&2
+            exit 1
+        fi
+    done <<< "$required_config"
 fi
 
 echo -e "\nStarting compilation...\n"
@@ -70,5 +98,6 @@ if make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" LLVM=1 LLVM_IAS=1 CR
     echo -e "\nCompleted in $((SECONDS / 60)) minute(s) and $((SECONDS % 60)) second(s)!"
     echo "Zip: $ZIPNAME"
 else
-    echo -e "\nCompilation failed!"
+    echo -e "\nCompilation failed!" >&2
+    exit 1
 fi
