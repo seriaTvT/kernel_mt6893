@@ -1,0 +1,104 @@
+name: Build Chopin or Ares kernel
+run-name: Build ${{ inputs.device }} kernel (${{ inputs.mode }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: Device
+        type: choice
+        required: true
+        default: chopin
+        options:
+          - chopin
+          - ares
+      mode:
+        description: 'Kernel mode (stock without root, BakaSU only, or BakaSU with SUSFS)'
+        type: choice
+        required: true
+        default: stock
+        options:
+          - stock
+          - bakasu
+          - susfs
+      bakasu_ref:
+        description: 'Optional BakaSU branch, tag, or SHA (defaults to main)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential flex libelf-dev libssl-dev
+
+      - name: Install Android toolchains
+        shell: bash
+        env:
+          CLANG_ARCHIVE_URL: https://github.com/seriaTvT/kernel-builder-chopin/releases/download/Toolchain/linux-x86-bd96dfe349c962681f0e5388af874c771ef96670-clang-r416183b.tar.gz
+          CLANG_ARCHIVE_SHA256: 8a64ffddacd89b838fdf34c2944f4350b734ffb987ccbf8d476fc34dc6eb56c5
+        run: |
+          toolchains="$RUNNER_TEMP/toolchains"
+          mkdir -p "$toolchains/clang"
+          curl --fail --location --retry 3 --output "$toolchains/clang.tar.gz" "$CLANG_ARCHIVE_URL"
+          printf '%s  %s\n' "$CLANG_ARCHIVE_SHA256" "$toolchains/clang.tar.gz" | sha256sum -c -
+          tar -xf "$toolchains/clang.tar.gz" -C "$toolchains/clang"
+          rm "$toolchains/clang.tar.gz"
+
+          checkout_gcc() {
+            local name=$1 repository=$2 commit=$3
+            git init --quiet "$toolchains/$name"
+            git -C "$toolchains/$name" fetch --depth=1 "$repository" "$commit"
+            git -C "$toolchains/$name" checkout --quiet --detach FETCH_HEAD
+          }
+
+          checkout_gcc gcc-arm64 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 \
+            5e030eafe024784a73cdf47e6936ac0dbfc763dc
+          checkout_gcc gcc-arm32 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 \
+            111258a10e017f067b27e6cfcea7619d753f3309
+          printf '%s\n' "$toolchains/clang/bin" "$toolchains/gcc-arm64/bin" \
+            "$toolchains/gcc-arm32/bin" >> "$GITHUB_PATH"
+          printf 'LD_LIBRARY_PATH=%s\n' "$toolchains/clang/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Build kernel and device tree
+        id: compile
+        shell: bash
+        env:
+          DEVICE: ${{ inputs.device }}
+          MODE: ${{ inputs.mode }}
+          BAKASU_REF: ${{ inputs.bakasu_ref }}
+        run: |
+          bash scripts/build-chopin-family.sh "$DEVICE" "$MODE" "$RUNNER_TEMP/kernel-out" 2>&1 |
+            tee "$RUNNER_TEMP/kernel-build.log"
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.device }}-${{ inputs.mode }}-${{ github.sha }}
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/kernel-out/arch/arm64/boot/Image.gz-dtb
+            ${{ runner.temp }}/kernel-out/.config
+            ${{ runner.temp }}/kernel-out/build-info.txt
+            ${{ runner.temp }}/kernel-build.log
+
+      - name: Upload failed build log
+        if: failure() && steps.compile.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.device }}-${{ inputs.mode }}-failed-build-log
+          path: ${{ runner.temp }}/kernel-build.log
