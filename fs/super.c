@@ -38,6 +38,11 @@
 #include <linux/user_namespace.h>
 #include "internal.h"
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#include <linux/susfs.h>
+extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
+#endif
+
 
 static LIST_HEAD(super_blocks);
 static DEFINE_SPINLOCK(sb_lock);
@@ -971,13 +976,25 @@ int get_anon_bdev(dev_t *p)
 {
 	int dev;
 	int error;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	bool sus_dev = static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted) &&
+		       susfs_is_current_ksu_domain();
+#else
+	const bool sus_dev = false;
+#endif
+	int min_dev;
 
  retry:
 	if (ida_pre_get(&unnamed_dev_ida, GFP_ATOMIC) == 0)
 		return -ENOMEM;
 	spin_lock(&unnamed_dev_lock);
-	error = ida_get_new_above(&unnamed_dev_ida, unnamed_dev_start, &dev);
-	if (!error)
+	min_dev = unnamed_dev_start;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (sus_dev)
+		min_dev = DEFAULT_KSU_MNT_MINOR_DEV;
+#endif
+	error = ida_get_new_above(&unnamed_dev_ida, min_dev, &dev);
+	if (!error && !sus_dev)
 		unnamed_dev_start = dev + 1;
 	spin_unlock(&unnamed_dev_lock);
 	if (error == -EAGAIN)

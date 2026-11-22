@@ -193,6 +193,10 @@ out:
 	return error;
 }
 
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+extern bool susfs_is_priority_uid_filtered(uid_t uid);
+#endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+
 SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 {
 	struct task_struct *g, *p;
@@ -238,6 +242,10 @@ SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 		if (!who)
 			uid = cred->uid;
 		else if (!uid_eq(uid, cred->uid)) {
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+			if (cred->uid.val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
+				goto out_unlock;
+#endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
 			user = find_user(uid);
 			if (!user)
 				goto out_unlock;	/* No processes for this user */
@@ -306,6 +314,10 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 		if (!who)
 			uid = cred->uid;
 		else if (!uid_eq(uid, cred->uid)) {
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+			if (cred->uid.val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
+				goto out_unlock;
+#endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
 			user = find_user(uid);
 			if (!user)
 				goto out_unlock;	/* No processes for this user */
@@ -594,6 +606,10 @@ error:
 }
 
 
+#ifdef CONFIG_KSU_SUSFS
+extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);
+#endif
+
 /*
  * This function implements a generic ability to update ruid, euid,
  * and suid.  This allows you to implement the 4.4 compatible seteuid().
@@ -655,6 +671,11 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 	retval = security_task_fix_setuid(new, old, LSM_SETID_RES);
 	if (retval < 0)
 		goto error;
+
+#ifdef CONFIG_KSU_SUSFS
+	if (ruid != (uid_t)-1)
+		ksu_handle_setresuid(from_kuid(&init_user_ns, kruid), euid, suid);
+#endif
 
 	return commit_creds(new);
 
@@ -1185,6 +1206,10 @@ static int override_release(char __user *release, size_t len)
 	return ret;
 }
 
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+extern void susfs_spoof_uname(struct new_utsname *name);
+#endif
+
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
@@ -1214,6 +1239,9 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	}
 
 	up_read(&uts_sem);
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	susfs_spoof_uname(&tmp);
+#endif
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 

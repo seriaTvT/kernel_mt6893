@@ -20,6 +20,9 @@
 #include <linux/uaccess.h>
 #include <linux/mm_inline.h>
 #include <linux/sched/signal.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#endif
 
 #include <asm/elf.h>
 #include <asm/tlb.h>
@@ -344,6 +347,15 @@ static void show_vma_header_prefix(struct seq_file *m,
 		   MAJOR(dev), MINOR(dev), ino);
 }
 
+static bool susfs_skip_vma(struct vm_area_struct *vma)
+{
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+	if (vma->vm_file && (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))))
+		return true;
+#endif
+	return false;
+}
+
 static void
 show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 {
@@ -358,9 +370,36 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 
 	if (file) {
 		struct inode *inode = file_inode(vma->vm_file);
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+		if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+			char *spoofed_redirected_name = NULL;
+			int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
+			int ret = susfs_open_redirect_spoof_show_map_vma_srcu(inode, &ino, &dev, &spoofed_redirected_name);
+			if (!ret) {
+				pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+				start = vma->vm_start;
+				end = vma->vm_end;
+				show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
+				seq_pad(m, ' ');
+				if (spoofed_redirected_name)
+					seq_puts(m, spoofed_redirected_name);
+				seq_putc(m, '\n');
+				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
+				return;
+			}
+			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
+		}
+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+		if (SUSFS_IS_INODE_SUS_MAP(inode))
+			return;
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 		dev = inode->i_sb->s_dev;
 		ino = inode->i_ino;
 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+		susfs_sus_kstat_spoof_show_map_vma(inode, &dev, &ino);
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 	}
 
 	start = vma->vm_start;
@@ -863,6 +902,10 @@ static int show_smap(struct seq_file *m, void *v)
 	struct vm_area_struct *vma = v;
 	struct mem_size_stats mss;
 
+	if (susfs_skip_vma(vma)) {
+		m_cache_vma(m, vma);
+		return 0;
+	}
 	memset(&mss, 0, sizeof(mss));
 
 	smap_gather_stats(vma, &mss);
@@ -917,7 +960,8 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
 	hold_task_mempolicy(priv);
 
 	for (vma = priv->mm->mmap; vma;) {
-		smap_gather_stats(vma, &mss);
+		if (!susfs_skip_vma(vma))
+			smap_gather_stats(vma, &mss);
 		last_vma_end = vma->vm_end;
 
 		/*
@@ -1666,7 +1710,6 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 	while (count && (start_vaddr < end_vaddr)) {
 		int len;
 		unsigned long end;
-
 		pm.pos = 0;
 		end = (start_vaddr + PAGEMAP_WALK_SIZE) & PAGEMAP_WALK_MASK;
 		/* overflow ? */
@@ -1674,6 +1717,24 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 			end = end_vaddr;
 		down_read(&mm->mmap_sem);
 		ret = walk_page_range(mm, start_vaddr, end, &pagemap_ops, &pm);
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+		if (susfs_is_current_proc_umounted_app()) {
+			struct vm_area_struct *vma;
+			unsigned long limit = start_vaddr + pm.pos * PAGE_SIZE;
+
+			for (vma = find_vma(mm, start_vaddr);
+			     vma && vma->vm_start < limit; vma = vma->vm_next) {
+				unsigned long first, last;
+
+				if (!susfs_skip_vma(vma))
+					continue;
+				first = (max(vma->vm_start, start_vaddr) - start_vaddr) >> PAGE_SHIFT;
+				last = (min(vma->vm_end, limit) - start_vaddr) >> PAGE_SHIFT;
+				memset(pm.buffer + first, 0,
+				       (last - first) * sizeof(*pm.buffer));
+			}
+		}
+#endif
 		up_read(&mm->mmap_sem);
 		start_vaddr = end;
 

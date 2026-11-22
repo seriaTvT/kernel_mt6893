@@ -18,6 +18,12 @@ struct path;
 struct mount;
 struct shrink_control;
 
+#ifdef CONFIG_KSU_SUSFS
+struct filename;
+int filename_lookup(int dfd, struct filename *name, unsigned int flags,
+		    struct path *path, struct path *root);
+#endif
+
 /*
  * block_dev.c
  */
