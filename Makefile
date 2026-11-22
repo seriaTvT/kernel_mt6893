@@ -359,6 +359,13 @@ hdr-arch  := $(SRCARCH)
 KCONFIG_CONFIG	?= .config
 export KCONFIG_CONFIG
 
+# The normal kernel build does not require the optional BakaSU checkout.
+ifeq ($(KBUILD_KSU),1)
+export KSU_KCONFIG := drivers/kernelsu/Kconfig
+else
+export KSU_KCONFIG := drivers/Kconfig.no-ksu
+endif
+
 # SHELL used by kbuild
 CONFIG_SHELL := $(shell if [ -x "$$BASH" ]; then echo $$BASH; \
 	  else if [ -x /bin/bash ]; then echo /bin/bash; \

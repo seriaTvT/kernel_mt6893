@@ -1716,6 +1716,12 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
+#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
+extern int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr,
+				   void *argv, void *envp, int *flags,
+				   int *retval);
+#endif
+
 /*
  * sys_execve() executes a new program.
  */
@@ -1848,6 +1854,12 @@ static int __do_execve_file(int fd, struct filename *filename,
 	if (retval < 0)
 		goto out;
 
+#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
+	if (filename)
+		ksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags,
+				       &retval);
+#endif
+
 	/* execve succeeded */
 	current->fs->in_exec = 0;
 	current->in_execve = 0;
@@ -1880,15 +1892,27 @@ out_files:
 	if (displaced)
 		reset_files_struct(displaced);
 out_ret:
+#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
+	if (filename)
+		ksu_handle_post_execveat(&fd, &filename, &argv, &envp, &flags,
+				       &retval);
+#endif
 	if (filename)
 		putname(filename);
 	return retval;
 }
 
-#ifdef CONFIG_KSU_MANUAL_HOOK
+#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
 __attribute__((hot))
 extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
 				void *argv, void *envp, int *flags);
+#endif
+#ifdef CONFIG_KSU_SUSFS
+extern int ksu_prepare_susfs_preinit(struct filename **filename,
+				     struct user_arg_ptr *argv);
+extern int ksu_finish_susfs_preinit(int *fd, struct filename **filename,
+				    void *argv, void *envp, int *flags,
+				    int *ret, int *preinit_fd);
 #endif
 
 static int do_execveat_common(int fd, struct filename *filename,
@@ -1896,8 +1920,27 @@ static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr envp,
 			      int flags)
 {
-#ifdef CONFIG_KSU_MANUAL_HOOK
+#if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
 	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+#endif
+#ifdef CONFIG_KSU_SUSFS
+	if (unlikely(current->pid == 1) && !IS_ERR_OR_NULL(filename)) {
+		int preinit_fd = ksu_prepare_susfs_preinit(&filename, &argv);
+
+		if (preinit_fd >= 0) {
+			int ret;
+
+			/* exec consumes a name reference, including on failure. */
+			filename->refcnt++;
+			ret = __do_execve_file(fd, filename, argv, envp, flags, NULL);
+			if (ksu_finish_susfs_preinit(&fd, &filename, &argv, &envp,
+						    &flags, &ret, &preinit_fd))
+				return __do_execve_file(fd, filename, argv, envp,
+							flags, NULL);
+			putname(filename);
+			return ret;
+		}
+	}
 #endif
 
 	return __do_execve_file(fd, filename, argv, envp, flags, NULL);

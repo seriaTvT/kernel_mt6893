@@ -219,4 +219,10 @@ source "drivers/nfc/Kconfig"
 
 source "drivers/p73-spi/Kconfig"
 
+config KSU_KCONFIG
+	string
+	option env="KSU_KCONFIG"
+
+source "$KSU_KCONFIG"
+
 endmenu

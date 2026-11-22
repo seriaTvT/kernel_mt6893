@@ -569,10 +569,21 @@ static inline void file_pos_write(struct file *file, loff_t pos)
 }
 
 
+#ifdef CONFIG_KSU_SUSFS
+extern struct static_key_true ksu_is_init_rc_hook_enabled;
+extern int ksu_handle_sys_read(unsigned int fd, char __user **buf,
+			       size_t *count);
+#endif
+
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
 	struct fd f = fdget_pos(fd);
 	ssize_t ret = -EBADF;
+
+#ifdef CONFIG_KSU_SUSFS
+	if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))
+		ksu_handle_sys_read(fd, &buf, &count);
+#endif
 
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);

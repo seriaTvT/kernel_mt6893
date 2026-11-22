@@ -65,6 +65,9 @@ struct mount {
 	__u32 mnt_fsnotify_mask;
 #endif
 	int mnt_id;			/* mount identifier */
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	bool mnt_id_borrowed;		/* not allocated from mnt_id_ida */
+#endif
 	int mnt_group_id;		/* peer group identifier */
 	int mnt_expiry_mark;		/* true if marked for expiry */
 	struct hlist_head mnt_pins;

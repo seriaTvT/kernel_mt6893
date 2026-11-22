@@ -20,6 +20,9 @@
  *
  */
 #include <linux/gfp.h>
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+extern bool susfs_is_priority_uid_filtered(uid_t uid);
+#endif
 #include <linux/kernel.h>
 #include <linux/export.h>
 #include <linux/ioprio.h>
@@ -121,8 +124,15 @@ SYSCALL_DEFINE3(ioprio_set, int, which, int, who, int, ioprio)
 			if (!who)
 				user = current_user();
 			else
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+			{
+				if (current_uid().val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
+					break;
 				user = find_user(uid);
-
+			}
+#else
+				user = find_user(uid);
+#endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
 			if (!user)
 				break;
 
@@ -214,8 +224,15 @@ SYSCALL_DEFINE2(ioprio_get, int, which, int, who)
 			if (!who)
 				user = current_user();
 			else
+#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
+			{
+				if (current_uid().val >= 10000 && susfs_is_priority_uid_filtered(uid.val))
+					break;
 				user = find_user(uid);
-
+			}
+#else
+				user = find_user(uid);
+#endif // #ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
 			if (!user)
 				break;
 

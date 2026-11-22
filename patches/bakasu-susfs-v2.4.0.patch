@@ -1,0 +1,91 @@
+diff --git a/kernel/Kconfig b/kernel/Kconfig
+index da8787d1a56f5ea3d160da5637596476e709ee1f..3152d4ba4917508b883b97e3cc566caf2a8a5213 100644
+--- a/kernel/Kconfig
++++ b/kernel/Kconfig
+@@ -3,7 +3,7 @@ menu "KernelSU"
+ config KSU
+ 	  tristate "KernelSU function support"
+       select KALLSYMS
+-	  default y
++	  default n
+ 	  help
+ 		Enable kernel-level root privileges on Android System.
+ 		Choose "m" here to build KernelSU as LKM
+diff --git a/kernel/feature/sucompat.c b/kernel/feature/sucompat.c
+index a47c3903eb9c43f8844618f1b018fce9ecebbd25..562ae612f950aa504b2493aa70c2a0a33dd17088 100644
+--- a/kernel/feature/sucompat.c
++++ b/kernel/feature/sucompat.c
+@@ -375,6 +375,9 @@ int ksu_handle_post_execve_common(int *fd, const char **filename, void *argv, vo
+     if (likely(!test_thread_flag(TIF_PROC_IN_KSU_EXECVE))) {
+         return -EINVAL;
+     }
++    clear_thread_flag(TIF_PROC_IN_KSU_EXECVE);
++    if (retval && *retval < 0)
++        return *retval;
+ #ifndef KSU_COMPAT_HAS_SUSFS_INSTALL_SU_FD_DIRECT_CALL
+     ksu_install_su_fd();
+ #endif
+diff --git a/kernel/manager/throne_tracker.c b/kernel/manager/throne_tracker.c
+index f7e9531d1f9e5975f60125c1b3462f766327b6e5..488a668c55730c113dcd072df6d3ce179b1d3f88 100644
+--- a/kernel/manager/throne_tracker.c
++++ b/kernel/manager/throne_tracker.c
+@@ -11,7 +11,7 @@
+ #include <linux/stat.h>
+ #include <linux/namei.h>
+ #include <linux/kernel.h> // for container_of in UL
+-#ifdef CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER
++#ifdef CONFIG_KSU_SUSFS
+ #include <linux/susfs.h>
+ #endif
+ 
+@@ -448,7 +448,11 @@ void ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry)
+         cb = kzalloc(sizeof(*cb), GFP_KERNEL);
+         if (cb) {
+             cb->func = ksu_track_throne_tw_func;
++#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
++            if (!task_work_add(current, cb, true))
++#else
+             if (!task_work_add(current, cb, TWA_RESUME))
++#endif
+                 return;
+             kfree(cb);
+         }
+diff --git a/kernel/runtime/ksud_integration.c b/kernel/runtime/ksud_integration.c
+index aaf79ea7f92dd7a4edcfba69849331a1ce63fed0..bda8724af5ff70fec5e6de74cb6466861a4a8b63 100644
+--- a/kernel/runtime/ksud_integration.c
++++ b/kernel/runtime/ksud_integration.c
+@@ -674,6 +674,21 @@ void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_pt
+ #endif
+ 
+ #ifdef CONFIG_KSU_SUSFS
++int ksu_prepare_susfs_preinit(struct filename **filename,
++                             struct user_arg_ptr *argv)
++{
++    if (!ksu_preinit_enabled_param())
++        return -EOPNOTSUPP;
++    return ksu_setup_preinit_file(filename, argv);
++}
++
++int ksu_finish_susfs_preinit(int *fd, struct filename **filename, void *argv,
++                            void *envp, int *flags, int *ret, int *preinit_fd)
++{
++    return ksu_preinit_handle_post_execveat(fd, filename, argv, envp, flags,
++                                          ret, preinit_fd);
++}
++
+ void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
+ {
+     struct file *file = fget(fd);
+diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
+index 8af7412da54b92add75cc2d701497b42d3a5a625..413e0d29c04716dbdb87cae83b05cc55c743e2d1 100644
+--- a/kernel/supercall/dispatch.c
++++ b/kernel/supercall/dispatch.c
+@@ -1196,7 +1196,7 @@ int ksu_handle_susfs_cmd(unsigned int cmd, void __user **arg)
+         return 0;
+     }
+     }
+-    return 0;
++    return -EOPNOTSUPP;
+ }
+ #endif
+ 
