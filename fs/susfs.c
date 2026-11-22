@@ -693,8 +693,8 @@ void susfs_set_sus_path_uid_filter(void __user **user_info) {
 	if (!is_uid_filter_set_before)
 		is_uid_filter_set_before = true;
 	mutex_unlock(&susfs_mutex_lock_sus_path_uid_filter);
-	synchronize_rcu();
-	kfree_rcu(old_bitmap, rcu);
+	if (old_bitmap)
+		kfree_rcu(old_bitmap, rcu);
 
 	SUSFS_LOGI("the sus path uid filter is set\n");
 	err = 0;
@@ -767,8 +767,8 @@ static int susfs_sus_path_app_strings_worker(void *data) {
 	rcu_assign_pointer(sus_path_uid_filter_bitmap, new_bitmap);
 	new_bitmap = NULL;
 	mutex_unlock(&susfs_mutex_lock_sus_path_uid_filter);
-	synchronize_rcu();
-	kfree_rcu(old_bitmap, rcu);
+	if (old_bitmap)
+		kfree_rcu(old_bitmap, rcu);
 
 	SUSFS_LOGI("the uids of the sus path uid filter are resolved again\n");
 
@@ -2069,8 +2069,8 @@ void susfs_set_priority_uid_filter(void __user **user_info) {
 	if (!is_uid_filter_set_before)
 		is_uid_filter_set_before = true;
 	mutex_unlock(&susfs_mutex_lock_priority_uid_filter);
-	synchronize_rcu();
-	kfree_rcu(old_bitmap, rcu);
+	if (old_bitmap)
+		kfree_rcu(old_bitmap, rcu);
 
 	SUSFS_LOGI("the priority uid filter is set\n");
 	err = 0;
@@ -2143,8 +2143,8 @@ static int susfs_priority_app_strings_worker(void *data) {
 	rcu_assign_pointer(priority_uid_filter_bitmap, new_bitmap);
 	new_bitmap = NULL;
 	mutex_unlock(&susfs_mutex_lock_priority_uid_filter);
-	synchronize_rcu();
-	kfree_rcu(old_bitmap, rcu);
+	if (old_bitmap)
+		kfree_rcu(old_bitmap, rcu);
 
 	SUSFS_LOGI("the uids of the priority uid filter are resolved again\n");
 
