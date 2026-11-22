@@ -39,14 +39,23 @@ for arg in "$@"; do
 done
 
 [ "$CLEAN_BUILD" = true ] && rm -rf out
-sh scripts/prepare-bakasu.sh || exit 1
+if [ "$INCLUDE_KSU" = true ]; then
+    sh scripts/prepare-bakasu.sh || exit 1
+    export KBUILD_KSU=1
+fi
 
 # Compilation process
 mkdir -p out
 make O=out ARCH=arm64 "$DEFCONFIG" || exit 1
-if [ "$INCLUDE_KSU" = true ] && [ "$DEVICE" != chopin ]; then
-    scripts/config --file out/.config -e KALLSYMS -e KALLSYMS_ALL \
-        -e KSU -e KSU_MANUAL_HOOK -d KSU_SUSFS
+if [ "$INCLUDE_KSU" = true ]; then
+    if [ "$DEVICE" = chopin ]; then
+        scripts/config --file out/.config -e KALLSYMS -e KALLSYMS_ALL \
+            -e KSU -d KSU_MANUAL_HOOK -e KSU_SUSFS \
+            -e KSU_SUSFS_PRIORITY_UID_FILTER || exit 1
+    else
+        scripts/config --file out/.config -e KALLSYMS -e KALLSYMS_ALL \
+            -e KSU -e KSU_MANUAL_HOOK -d KSU_SUSFS || exit 1
+    fi
     make O=out ARCH=arm64 olddefconfig || exit 1
 fi
 
