@@ -39,11 +39,16 @@ for arg in "$@"; do
 done
 
 [ "$CLEAN_BUILD" = true ] && rm -rf out
-[ "$INCLUDE_KSU" = true ] && echo "Save your stuff!!" && curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
+sh scripts/prepare-bakasu.sh || exit 1
 
 # Compilation process
 mkdir -p out
-make O=out ARCH=arm64 $DEFCONFIG
+make O=out ARCH=arm64 "$DEFCONFIG" || exit 1
+if [ "$INCLUDE_KSU" = true ] && [ "$DEVICE" != chopin ]; then
+    scripts/config --file out/.config -e KALLSYMS -e KALLSYMS_ALL \
+        -e KSU -e KSU_MANUAL_HOOK -d KSU_SUSFS
+    make O=out ARCH=arm64 olddefconfig || exit 1
+fi
 
 echo -e "\nStarting compilation...\n"
 if make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image.gz; then
@@ -53,10 +58,6 @@ if make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" LLVM=1 LLVM_IAS=1 CR
     rm -rf *zip out/arch/arm64/boot
     (cd AnyKernel3 && zip -r9 "../$ZIPNAME" * -x '*.git*' README.md *placeholder)
     rm -rf AnyKernel3
-    if [ "$INCLUDE_KSU" = true ]; then
-        git restore drivers/{Makefile,Kconfig}
-        rm -rf KernelSU drivers/kernelsu
-    fi
     echo -e "\nCompleted in $((SECONDS / 60)) minute(s) and $((SECONDS % 60)) second(s)!"
     echo "Zip: $ZIPNAME"
 else
